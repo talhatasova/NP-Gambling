@@ -1,0 +1,43 @@
+# Folders
+/Extra
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Build files
+dist/
+build/
+out/
+.temp/
+
+# System files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.eggs/
+*.env
+
+
+# OS-generated files
+*.bak
+*.tmp
+*.backup
+*.swp
+*.swo
+*.lock
+
+# Custom application files
+*.db
+*.sqlite
+*.sqlite3
+*.config
+*.pkl
