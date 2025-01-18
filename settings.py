@@ -36,13 +36,13 @@ class Emoji():
     ZERO = "0️⃣"
     ONE = "1️⃣"
     TWO = "2️⃣"
+    GAY_KISS = "👨🏿‍❤️‍💋‍👨🏿"
+    GAY_FLAG = "🏳️‍🌈"
     
     REACTION_ROLES = {
     "🎲": ID.Roles.GAMBLER
     }
         
-
-
 class Classes():
     BET = "bet"
     GAMBLER = "gmb"

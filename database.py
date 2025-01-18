@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import random
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, Table, Double, DateTime
 from sqlalchemy import event, func, case
@@ -182,10 +182,14 @@ def get_gambler_bet_details(gambler_dc_id: int):
     return bets_details
 
 def add_bet(description: dict) -> Bet:
-    bet = Bet(**description)
-    session.add(bet)
-    session.commit()
-    return bet
+    try:
+        bet = Bet(**description)
+        session.add(bet)
+        session.commit()
+        return bet
+    except Exception as e:
+        session.rollback()
+        print(e)
 
 def link_gambler_to_bet(gambler_id: int, bet_id: int, bet_on: int, skip_timecheck: bool=False):
     gambler = session.get(Gambler, gambler_id)
@@ -196,7 +200,7 @@ def link_gambler_to_bet(gambler_id: int, bet_id: int, bet_on: int, skip_timechec
     if not bet:
         raise ValueError(f"No bet found with ID: {bet_id}")
     if not skip_timecheck:
-        if datetime.now() > bet.deadline:
+        if datetime.now(timezone.utc) > bet.deadline.astimezone(timezone.utc):
             raise ValueError("You are too late to place a bet on this match. Try another one.")
 
     # Query the existing `bet_on` value
@@ -207,11 +211,20 @@ def link_gambler_to_bet(gambler_id: int, bet_id: int, bet_on: int, skip_timechec
     result = session.execute(stmt).scalar()  # Fetch the `bet_on` value if it exists
 
     # Determine old and new bets for messaging
-    old_bet = bet.home_team if result == 1 else bet.away_team if result == 2 else "beraberlik" if result == 0 else None
-    new_bet = bet.home_team if bet_on == 1 else bet.away_team if bet_on == 2 else "beraberlik" if bet_on == 0 else None
+    old_bet = bet.home_team if result == 1 else bet.away_team if result == 2 else "beraberlik" if result == 0 else "kararsiz"
+    new_bet = bet.home_team if bet_on == 1 else bet.away_team if bet_on == 2 else "beraberlik" if bet_on == 0 else "kararsiz"
 
     if old_bet == new_bet:
         raise ValueError(f"You have already made your bet as {old_bet}.")
+    
+    if bet_on == 3:
+        stmt = gambler_bet_table.delete().where(
+            (gambler_bet_table.c.gambler_id == gambler_id) &
+            (gambler_bet_table.c.bet_id == bet_id)
+            )
+        session.execute(stmt)
+        session.commit()
+        return f"{old_bet} olan iddiamı geri çekiyorum çünkü gayım."
     
     if result is not None:
         # If a previous bet exists, update the `bet_on` value
@@ -275,7 +288,7 @@ def set_bet_result(bet_id: int, result: int):
     if bet.winning_odd:
         raise ValueError(f"This bet ({bet}) has already resulted: {bet.winning_odd}")
     
-    if bet.deadline > datetime.now():
+    if bet.deadline.astimezone(timezone.utc) > datetime.now(timezone.utc):
         raise ValueError(f"You cannot set the result before the match ends.")
     
     # Validate the result

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from discord import Intents, Interaction, Embed, Colour
 from discord import app_commands
 from discord.app_commands import Choice
@@ -21,9 +21,7 @@ bot_channel_id = int(os.getenv("NP_CHANNEL_ID"))
 
 intents = Intents.default()
 intents.message_content = True
-bot = commands.Bot(
-    command_prefix="!", intents=intents
-)  # ! commands for admins, / commands for public
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 
 # Sync commands to Discord
@@ -37,12 +35,10 @@ async def on_ready():
 
 
 # ------------------------------- PLACE BET -------------------------------#
-@bot.tree.command(
-    name="bet", description="Place your guess on a bet from the given list."
-)
+@bot.tree.command(name="bet", description="Place your guess on a bet from the given list.")
 @app_commands.describe(
     bet_id="Select the match you want to bet on.",
-    bet_on="Your guess: 1 for Home, 0 for Draw, 2 for Away",
+    bet_on="Your guess: 1 for Home, 0 for Draw, 2 for Away, 3 for Withdraw",
 )
 async def place_bet(interaction: Interaction, bet_id: int, bet_on: int):
     if not await isRegisteredUser(interaction=interaction):
@@ -64,7 +60,6 @@ async def place_bet(interaction: Interaction, bet_id: int, bet_on: int):
     except Exception as e:
         print(e)
 
-
 @place_bet.autocomplete("bet_on")
 async def place_bet_bet_on_autocomplete(
     interaction: Interaction, current: str
@@ -78,6 +73,7 @@ async def place_bet_bet_on_autocomplete(
             app_commands.Choice(name=f"{bet.home_team} ({bet.odd_1})", value=1),
             app_commands.Choice(name=f"Draw ({bet.odd_0})", value=0),
             app_commands.Choice(name=f"{bet.away_team} ({bet.odd_2})", value=2),
+            app_commands.Choice(name="Indecisive (1.00)", value=3),
         ]
         return options
     except Exception as e:
@@ -138,8 +134,27 @@ async def place_bet_bet_as_autocomplete(interaction: Interaction, current: str):
     ][:25]
 
 @place_bet_admin.autocomplete("bet_id")
-async def place_bet_as_bet_id_autocomplete(interaction: Interaction, current: str):
-    return await place_bet_bet_id_autocomplete(interaction, current)
+async def place_bet_as_bet_id_autocomplete(
+    interaction: Interaction, current: str
+) -> List[app_commands.Choice]:
+    isAdmin = ID.Roles.ADMIN in [role.id for role in interaction.user.roles]
+    try:
+        available_bets: List[Bet] = database.get_all_bets()
+        filtered_bets = [
+            app_commands.Choice(
+                name=f"({bet.field})   --->   {bet.home_team} - {bet.away_team}",
+                value=bet.id,
+            )
+            for bet in available_bets
+            if current.lower() in f"{bet.home_team} {bet.away_team}".lower()
+            and bet.winning_odd not in Constant.BET_OUTCOMES
+            and (bet.deadline > datetime.now() or isAdmin)
+        ]
+        # Return up to 25 results (Discord limit)
+        return filtered_bets[:25]
+    except Exception as e:
+        print(f"Error in autocomplete: {e}")
+        return []
 
 @place_bet_admin.autocomplete("bet_on")
 async def place_bet_as_bet_on_autocomplete(interaction: Interaction, current: str):
@@ -194,7 +209,7 @@ async def create_bet(
 
     try:
         # Parse the match date
-        deadline_datetime = datetime.strptime(matchdate, "%Y-%m-%d %H:%M")
+        deadline_datetime = datetime.strptime(matchdate, "%Y-%m-%d %H:%M").astimezone(timezone.utc)
     except ValueError:
         await interaction.response.send_message(
             "Invalid datetime format. Please use YYYY-MM-DD HH:MM.",
@@ -414,9 +429,10 @@ async def get_me(interaction: Interaction):
         )
         embed.add_field(
             name="Recent Bets",
-            value="\n".join(bets[-5:]) if bets else "No recent bets.",
+            value="\n".join(bets[-10:]) if bets else "No recent bets.",
             inline=False
         )
+        embed.set_thumbnail(url=interaction.user.avatar.url)
         embed.set_footer(text="Keep betting to scratch Ibu's GÖT more!")
 
         # Send the embed
@@ -453,8 +469,8 @@ async def get_gambler(interaction: Interaction, gambler_id: str):
     gambler_id = int(gambler_id)
     
     try:
-        gambler: Gambler = database.get_gambler(gambler_dc_id=int(gambler_id))
-        bets = database.get_gambler_bet_details(gambler_dc_id=interaction.user.id)
+        gambler: Gambler = database.get_gambler(gambler_dc_id=gambler_id)
+        bets = database.get_gambler_bet_details(gambler_dc_id=gambler_id)
 
         if not bets:
             await interaction.response.send_message(
@@ -635,23 +651,22 @@ async def process_bet(interaction: Interaction, gambler_id: int, bet_id: int, be
         bet_placed = (
             f"🏠 **{bet.home_team}** ({bet.odd_1})" if bet_on == 1 else
             f"🤝 **Draw** ({bet.odd_0})" if bet_on == 0 else
-            f"🚩 **{bet.away_team}** ({bet.odd_2})"
+            f"🚩 **{bet.away_team}** ({bet.odd_2})" if bet_on == 2 else
+            "🏳️‍🌈 **Indecisive** (1.00)"
         )
 
         embed = Embed(
             title="🎲 Bet Placed Successfully 🎲",
             description=(
-                f"**Gambler:** {gambler.name}\n"
+                f"**Gambler:** {interaction.user.mention}\n"
                 f"**Match:** {bet.home_team} vs {bet.away_team}\n\n"
-                f"💰 **Odds:**\n"
-                f"- 🏠 **{bet.home_team}:** {bet.odd_1}\n"
-                f"- 🤝 **Draw:** {bet.odd_0}\n"
-                f"- 🚩 **{bet.away_team}:** {bet.odd_2}\n\n"
                 f"✅ **{gambler.name}'s Bet:** {bet_placed}"
             ),
             color=Colour.green()
+            
         )
-        embed.set_footer(text="Good luck with your bet!")
+        embed.set_footer(text="Developed by @talhatasova")
+        embed.set_thumbnail(url=interaction.user.avatar.url)
         embed.add_field(name="Comment", value=f"{gambler.name} says: {betcomment}", inline=False)
 
         # Respond publicly in the channel
@@ -696,7 +711,7 @@ async def update_leaderboard(interaction: Interaction, week: int):
         "```diff\n"
         f"+-------------------------- LEADERBOARD (Week #{week}) --------------------------+\n"
     )
-    leaderboard_content += "{:<7}{:<13}{:<8}{:<8}{:<10} | {:<8}{:<8}{:<10}\n".format(
+    leaderboard_content += "{:<7}{:<13}{:<8}{:<8}{:<10} | {:<7}{:<8}{:<10}\n".format(
         "W_Rank", "Name", "W_Pay", "W_%", "W_Stat",  # Weekly stats
         "G_Rank", "G_Pay", "G_Stat"                 # Global stats
     )
@@ -716,7 +731,7 @@ async def update_leaderboard(interaction: Interaction, week: int):
         global_stats = f"{gambler.total}|{gambler.correct}-{gambler.total - gambler.correct}"
 
         # Weekly and global parts
-        leaderboard_row = f"{weekly_rank:<7}{stat.name[:13]:<13}{stat.payoff:<8.1f}{weekly_win_rate:<8}{weekly_stats:<10} | {global_rank:<8}{gambler.payoff:<8.1f}{global_stats:<10}\n"
+        leaderboard_row = f"{weekly_rank:<7}{stat.name[:13]:<13}{stat.payoff:<8.2f}{weekly_win_rate:<8}{weekly_stats:<10} | {global_rank:<8}{gambler.payoff:<8.2f}{global_stats:<10}\n"
 
         # Add row to content
         leaderboard_content += leaderboard_row
@@ -749,15 +764,13 @@ async def isRegisteredUser(interaction: Interaction) -> bool:
         return True
     except KeyError:
         await interaction.response.send_message(
-            "You have not registered to gambling. Please use /register command in the corresponding channel and follow the steps.",
+            "You have not registered to gambling. Please use #kayit channel and claim your role first.",
             ephemeral=True,
         )
         return False
 
 
-async def isAuthorisedUser(
-    interaction: Interaction, allowed_roles_id_list: List[int] | int
-) -> bool:
+async def isAuthorisedUser(interaction: Interaction, allowed_roles_id_list: List[int] | int) -> bool:
     if isinstance(allowed_roles_id_list, int):
         allowed_roles_id_list = [allowed_roles_id_list]
 
@@ -769,9 +782,7 @@ async def isAuthorisedUser(
     return True
 
 
-async def isAuthorisedChannel(
-    interaction: Interaction, allowed_channels_id_list: List[int] | int
-) -> bool:
+async def isAuthorisedChannel(interaction: Interaction, allowed_channels_id_list: List[int] | int) -> bool:
     if isinstance(allowed_channels_id_list, int):
         allowed_channels_id_list = [allowed_channels_id_list]
 
