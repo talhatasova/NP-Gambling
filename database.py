@@ -50,6 +50,7 @@ class Bet(Base):
     __tablename__ = 'bets'
 
     id:Integer = Column(Integer, primary_key=True)
+    message_id:Integer = Column(Integer, nullable=True)
     field:String = Column(String, nullable=False)
     home_team:String = Column(String, nullable=False)
     away_team:String = Column(String, nullable=False)
@@ -211,11 +212,11 @@ def link_gambler_to_bet(gambler_id: int, bet_id: int, bet_on: int, skip_timechec
     result = session.execute(stmt).scalar()  # Fetch the `bet_on` value if it exists
 
     # Determine old and new bets for messaging
-    old_bet = bet.home_team if result == 1 else bet.away_team if result == 2 else "beraberlik" if result == 0 else "kararsiz"
-    new_bet = bet.home_team if bet_on == 1 else bet.away_team if bet_on == 2 else "beraberlik" if bet_on == 0 else "kararsiz"
+    old_bet = bet.home_team if result == 1 else bet.away_team if result == 2 else "Draw" if result == 0 else "Indecisive"
+    new_bet = bet.home_team if bet_on == 1 else bet.away_team if bet_on == 2 else "Draw" if bet_on == 0 else "Indecisive"
 
     if old_bet == new_bet:
-        raise ValueError(f"You have already made your bet as {old_bet}.")
+        raise ValueError(f"You have already made your bet as `{old_bet}`!")
     
     if bet_on == 3:
         stmt = gambler_bet_table.delete().where(
@@ -245,9 +246,6 @@ def link_gambler_to_bet(gambler_id: int, bet_id: int, bet_on: int, skip_timechec
             bet_on=bet_on
         )
         session.execute(stmt)
-
-        # Add the ORM relationship for the gambler and bet
-        #gambler.bets.append(bet)
         session.commit()
 
         line = (
@@ -280,6 +278,14 @@ def get_bet(bet_id: int):
     else:
         raise KeyError(f"No bet with the given ID: {bet_id}")
 
+def set_bet_message_id(bet_id: int, message_id: int):
+    bet = session.get(Bet, bet_id)
+    if bet:
+        bet.message_id = message_id
+        session.commit()
+    else:
+        raise KeyError(f"No bet with the given ID: {bet_id}")
+    
 def set_bet_result(bet_id: int, result: int):
     bet = session.get(Bet, bet_id)
     if not bet:
@@ -460,6 +466,3 @@ def update_weekly_stats(week_number: int):
     for rank, stat in enumerate(weekly_stats, start=1):
         stat.rank = rank
     session.commit()
-
-if __name__ == "__main__":
-    set_all_gamblers_global_stats()

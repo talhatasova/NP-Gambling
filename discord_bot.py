@@ -1,37 +1,49 @@
 from datetime import datetime, timezone
-from discord import Intents, Interaction, Embed, Colour
+from discord import Intents, Interaction, Embed, Colour, Message
 from discord import app_commands
 from discord.app_commands import Choice
 from discord.ext import commands
 import discord
 import os
 from dotenv import load_dotenv
-from rich import print
 from settings import Fields, ID, Emoji, Constant
 import database
 from database import Gambler, Bet
+from embed_messages import EmbedMessages, BetButtons
 from typing import List
 
 # Initialize the bot
 load_dotenv()
-app_id = os.getenv("APP_ID")
 token = os.getenv("DC_BOT_TOKEN")
-public_key = os.getenv("PUBLIC_KEY")
-bot_channel_id = int(os.getenv("NP_CHANNEL_ID"))
-
 intents = Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
-# Sync commands to Discord
 @bot.event
 async def on_ready():
     try:
         await bot.tree.sync()
+
+        # Register persistent views
+        all_bets = database.get_all_bets()  # Fetch all saved messages
+        for bet in all_bets:
+            if bet.deadline.astimezone(timezone.utc) > datetime.now(timezone.utc):
+                view = BetButtons(bet)
+                bot.add_view(view, message_id=bet.message_id)  # Attach persistent view to a message
+
         print(f"Bot is ready. Logged in as {bot.user}")
     except Exception as e:
         print(f"Error syncing commands: {e}")
+
+async def reload_bet_message(bet: Bet):
+    channel = bot.get_channel(ID.Channels.MAC_BILDIRIM)
+    if bet.deadline.astimezone(timezone.utc) > datetime.now(timezone.utc):
+        message = await channel.fetch_message(bet.message_id)
+        # Add a persistent view for this message
+        view = BetButtons(bet)
+        bot.add_view(view, message_id=bet.message_id)
+
 
 
 # ------------------------------- PLACE BET -------------------------------#
@@ -220,69 +232,25 @@ async def create_bet(
     try:
         # Prepare data for the new bet
         cols = [column.name for column in Bet.__table__.columns]
-        values = [
-            None,
-            field,
-            home_team,
-            away_team,
-            odd_1,
-            odd_0,
-            odd_2,
-            deadline_datetime,
-            week,
-            None,
-        ]
+        values = [None,None,field,home_team,away_team,odd_1,odd_0,odd_2,deadline_datetime,week,None]
         bet = {column: val for column, val in zip(cols, values)}
 
         # Create the bet in the database
         created_bet = database.add_bet(bet)
 
         # Send confirmation message to the admin channel
-        await interaction.response.send_message(
-            embed=Embed(
-                title=f"✅ Bet Created Successfully - ID: {created_bet.id}",
-                description=f"""
-                **Match:** {created_bet.home_team} vs {created_bet.away_team}
-
-                **Odds:**
-                - **{created_bet.home_team}:** {created_bet.odd_1}
-                - **Draw:** {created_bet.odd_0}
-                - **{created_bet.away_team}:** {created_bet.odd_2}
-
-                **Match Date:** {created_bet.deadline} (Week {created_bet.week})
-                """,
-                colour=Colour.green()
-            )
-        )
+        await interaction.response.send_message(embed=EmbedMessages.bet_created_confirmation(created_bet), ephemeral=True)
 
         # Send the fancy announcement message to the mac-bildirim channel
         mac_bildirim_kanal = interaction.guild.get_channel(ID.Channels.MAC_BILDIRIM)
         if mac_bildirim_kanal:
-            embed = Embed(
-                title="⚽ New Match Announcement ⚽",
-                description=(
-                    f"🏟️ **Field**: {created_bet.field}\n"
-                    f"⚔️ **Match**: {created_bet.home_team} vs {created_bet.away_team}\n\n"
-                    f"💰 **Odds**:\n"
-                    f"- 🏠 **{created_bet.home_team}**: {created_bet.odd_1}\n"
-                    f"- 🤝 **Draw**: {created_bet.odd_0}\n"
-                    f"- 🚩 **{created_bet.away_team}**: {created_bet.odd_2}\n\n"
-                    f"📅 **Match Date**: {created_bet.deadline} (Week {created_bet.week})"
-                ),
-                color=Colour.blue(),
-            )
-            embed.set_footer(text="Place your bets now! Use the /bet command and follow the instructions!")
-            await mac_bildirim_kanal.send(embed=embed)
+            bet_message:Message = await mac_bildirim_kanal.send(embed=EmbedMessages.bet_created_announcement(created_bet), view=BetButtons(created_bet))
+            database.set_bet_message_id(created_bet.id, bet_message.id)
         else:
-            await interaction.followup.send(
-                "Announcement channel not found. Please check the bot's configuration.",
-                ephemeral=True,
-            )
+            await interaction.followup.send("Announcement channel not found. Please check the bot's configuration.", ephemeral=True)
 
     except Exception as e:
-        await interaction.response.send_message(
-            f"❌ An error occurred while creating the bet: {str(e)}", ephemeral=True
-        )
+        await interaction.response.send_message(f"❌ An error occurred while creating the bet: {str(e)}", ephemeral=True)
         return
 
 @create_bet.autocomplete("field")
@@ -392,7 +360,36 @@ async def set_bet_bet_id_autocomplete(
         print(f"Error in autocomplete: {e}")
         return []
 
-
+# ------------------------------- GET STATS OF A BET -------------------------------#
+@bot.tree.command(name="bet_stats", description="Get bet statistics.")
+@app_commands.default_permissions(administrator=True)  # Restricts visibility to admins
+@app_commands.describe(
+    bet_id="Enter the ID of the match to bet on.",
+)
+async def bet_stats(interaction: Interaction, bet_id: int):
+    bet = database.get_bet(bet_id=bet_id)
+    msg = [gambler.name for gambler in bet.gamblers]
+    await interaction.response.send_message("\n".join(msg))
+@bet_stats.autocomplete("bet_id")
+async def bet_stats_bet_id_autocomplete(
+    interaction: Interaction, current: str
+) -> List[app_commands.Choice]:
+    try:
+        available_bets: List[Bet] = database.get_all_bets()
+        filtered_bets = [
+            app_commands.Choice(
+                name=f"({bet.field})   --->   {bet.home_team} - {bet.away_team}",
+                value=bet.id,
+            )
+            for bet in available_bets
+            if current.lower() in f"{bet.home_team} {bet.away_team}".lower()
+        ]
+        # Return up to 25 results (Discord limit)
+        return filtered_bets[:25]
+    except Exception as e:
+        print(f"Error in autocomplete: {e}")
+        return []
+    
 # ------------------------------- GET MY BETS -------------------------------#
 @bot.tree.command(name="me", description="Get your statistics.")
 async def get_me(interaction: Interaction):
@@ -711,7 +708,7 @@ async def update_leaderboard(interaction: Interaction, week: int):
         "```diff\n"
         f"+-------------------------- LEADERBOARD (Week #{week}) --------------------------+\n"
     )
-    leaderboard_content += "{:<7}{:<13}{:<8}{:<8}{:<10} | {:<7}{:<8}{:<10}\n".format(
+    leaderboard_content += "{:<7}{:<13}{:<8}{:<8}{:<10} | {:<8}{:<8}{:<10}\n".format(
         "W_Rank", "Name", "W_Pay", "W_%", "W_Stat",  # Weekly stats
         "G_Rank", "G_Pay", "G_Stat"                 # Global stats
     )

@@ -29,6 +29,7 @@ class ID():
         MAC_BILDIRIM = 1317239684493213757
         KAYIT = 1317239294242455602
         LEADERBOARD = 1317239426203783239
+        DEBUG = 1328002864919875635
 
 class Emoji():
     X = "❌"
@@ -38,6 +39,11 @@ class Emoji():
     TWO = "2️⃣"
     GAY_KISS = "👨🏿‍❤️‍💋‍👨🏿"
     GAY_FLAG = "🏳️‍🌈"
+    HOME = "🏠"
+    AWAY  = "✈️"
+    DRAW = "🤝"
+    WITHDRAW = "🏳️"
+    DATE = "📅"
     
     REACTION_ROLES = {
     "🎲": ID.Roles.GAMBLER
