@@ -271,6 +271,10 @@ def get_all_bets():
     out.sort()
     return out
 
+def get_all_bets_count() -> int:
+    out = session.query(Bet).count()
+    return out
+
 def get_bet(bet_id: int):
     bet = session.get(Bet, bet_id)
     if bet:

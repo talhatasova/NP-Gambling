@@ -28,9 +28,8 @@ async def on_ready():
         # Register persistent views
         all_bets = database.get_all_bets()  # Fetch all saved messages
         for bet in all_bets:
-            if bet.deadline.astimezone(timezone.utc) > datetime.now(timezone.utc):
-                view = BetButtons(bet)
-                bot.add_view(view, message_id=bet.message_id)  # Attach persistent view to a message
+            if bet.message_id:
+                await reload_bet_message(bet)
 
         print(f"Bot is ready. Logged in as {bot.user}")
     except Exception as e:
@@ -38,13 +37,15 @@ async def on_ready():
 
 async def reload_bet_message(bet: Bet):
     channel = bot.get_channel(ID.Channels.MAC_BILDIRIM)
-    if bet.deadline.astimezone(timezone.utc) > datetime.now(timezone.utc):
+    if bet.message_id and not bet.winning_odd:
         message = await channel.fetch_message(bet.message_id)
         # Add a persistent view for this message
         view = BetButtons(bet)
         bot.add_view(view, message_id=bet.message_id)
-
-
+    """ elif bet.message_id and bet.winning_odd:
+        message = await channel.fetch_message(bet.message_id)
+        match_over = EmbedMessages.bet_deadline_passed(bet)
+        await message.edit(embed=match_over) """
 
 # ------------------------------- PLACE BET -------------------------------#
 @bot.tree.command(name="bet", description="Place your guess on a bet from the given list.")
@@ -691,6 +692,7 @@ async def process_bet(interaction: Interaction, gambler_id: int, bet_id: int, be
 async def update_leaderboard(interaction: Interaction, week: int):
     gamblers: List[Gambler] = database.get_all_gamblers()
 
+    gamblers = [gambler for gambler in gamblers if gambler.total / database.get_all_bets_count() > 0.4]
     # Sort gamblers globally based on total payoff
     gamblers.sort(key=lambda g: g.payoff, reverse=True)
     global_ranks = {gambler.id: rank + 1 for rank, gambler in enumerate(gamblers)}

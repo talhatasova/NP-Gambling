@@ -37,6 +37,22 @@ class EmbedMessages:
         )
         embed.set_footer(text="Use the buttons below to place your bet!")
         return embed
+    
+    @classmethod
+    def bet_deadline_passed(cls, bet:Bet) -> Embed:
+        embed = Embed(
+            title="⚽ Match is Over ⚽",
+            description=(
+                f"**`{bet.home_team} vs {bet.away_team}`**\n\n"
+                f"{Emoji.HOME} **{bet.home_team}**: {bet.odd_1} {Emoji.CHECK if bet.winning_odd == 1 else ''}\n"
+                f"{Emoji.DRAW} **Draw**: {bet.odd_0} {Emoji.CHECK if bet.winning_odd == 0 else ''}\n"
+                f"{Emoji.AWAY} **{bet.away_team}**: {bet.odd_2} {Emoji.CHECK if bet.winning_odd == 2 else ''}\n\n"
+                f"{Emoji.DATE} **Match Date**: `{bet.deadline}`"
+            ),
+            color=Colour.light_grey(),
+        )
+        embed.set_footer(text="Keep in touch to get notified for the future matchs!")
+        return embed
 
 class BetButtons(View):
     def __init__(self, bet: Bet):
@@ -44,12 +60,12 @@ class BetButtons(View):
         self.bet = bet
         
         # Check if the deadline has passed
-        is_disabled = datetime.now(timezone.utc) >= bet.deadline.astimezone(timezone.utc)
+        self.is_disabled = datetime.now(timezone.utc) >= bet.deadline.astimezone(timezone.utc)
 
-        self.home_button = Button(label=bet.home_team, style=ButtonStyle.primary, custom_id=f"{bet.id}_1", emoji=Emoji.HOME, disabled=is_disabled)
-        self.draw_button = Button(label="Draw", style=ButtonStyle.primary, custom_id=f"{bet.id}_0", emoji=Emoji.DRAW, disabled=is_disabled)
-        self.away_button = Button(label=bet.away_team, style=ButtonStyle.primary, custom_id=f"{bet.id}_2", emoji=Emoji.AWAY, disabled=is_disabled)
-        self.withdraw_button = Button(label="Withdraw", style=ButtonStyle.danger, custom_id=f"{bet.id}_3", emoji=Emoji.WITHDRAW, disabled=is_disabled)
+        self.home_button = Button(label=bet.home_team, style=ButtonStyle.primary, custom_id=f"{bet.id}_1", emoji=Emoji.HOME, disabled=self.is_disabled)
+        self.draw_button = Button(label="Draw", style=ButtonStyle.primary, custom_id=f"{bet.id}_0", emoji=Emoji.DRAW, disabled=self.is_disabled)
+        self.away_button = Button(label=bet.away_team, style=ButtonStyle.primary, custom_id=f"{bet.id}_2", emoji=Emoji.AWAY, disabled=self.is_disabled)
+        self.withdraw_button = Button(label="Withdraw", style=ButtonStyle.danger, custom_id=f"{bet.id}_3", emoji=Emoji.WITHDRAW, disabled=self.is_disabled)
 
         self.add_item(self.home_button)
         self.add_item(self.draw_button)
@@ -70,11 +86,10 @@ class BetButtons(View):
         bet_id, button_label = interaction.data['custom_id'].split('_')
         bet_id = int(bet_id)
         bet_on = int(button_label)
-        print(f"{gambler.name} | {self.bet.home_team} vs {self.bet.away_team} | {bet_on}")
         try:
             # Link gambler to the bet
             database.link_gambler_to_bet(gambler_id=gambler_id, bet_id=bet_id, bet_on=bet_on)
-
+            print(f"{gambler.name} | {self.bet.home_team} vs {self.bet.away_team} | {bet_on}")
             # Construct bet details
             bet_placed = (
                 f"🏠 **{self.bet.home_team}** ({self.bet.odd_1})" if bet_on == 1 else
@@ -113,6 +128,7 @@ class BetButtons(View):
                 color=Colour.red()
             )
             await interaction.followup.send(embed=error_embed, ephemeral=True)
+
         except Exception as e:
             # Handle unexpected errors
             print(f"Unexpected error while placing bet: {e}")
